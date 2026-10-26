@@ -1,0 +1,18 @@
+import {test,before,after} from 'node:test';
+import assert from 'node:assert/strict';
+import {spawn} from 'node:child_process';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {resolve} from 'node:path';
+const temp=mkdtempSync(resolve('tests','test-db-'));const port=3187;let child;
+const url=`http://127.0.0.1:${port}`;
+before(async()=>{child=spawn(process.execPath,['--experimental-sqlite','server.js'],{env:{...process.env,PORT:String(port),DB_PATH:resolve(temp,'test.db'),ADMIN_KEY:'test-secret-key'},stdio:'pipe'});await new Promise((ok,no)=>{const timer=setTimeout(()=>no(Error('Server startup timeout')),10000);child.stdout.on('data',()=>{clearTimeout(timer);ok();});child.on('error',no);});});
+after(async()=>{if(child){child.kill();await new Promise(ok=>child.once('exit',ok));}rmSync(temp,{recursive:true,force:true});});
+const payload=items=>({name:'مشتری آزمایشی',phone:'۰۹۱۲۳۴۵۶۷۸۹',address:'تهران، خیابان نمونه، پلاک ۱۲',postal:'۱۲۳۴۵۶۷۸۹۰',items});
+const item=(id=1,quantity=1)=>({id,quantity,size:'۳۸',color:'مشکی'});
+const post=data=>fetch(url+'/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+test('catalog and static pages are available',async()=>{const products=await(await fetch(url+'/api/products')).json();assert.equal(products.length,8);assert.equal(products[0].variants.length,15);assert.equal((await fetch(url)).status,200);assert.equal((await fetch(url+'/admin')).status,200);assert.equal((await fetch(url+'/server.js')).status,404);});
+test('invalid order does not change stock',async()=>{const r=await post({...payload([item()]),phone:'123'});assert.equal(r.status,400);});
+test('server calculates price, normalizes digits, stores order, decrements inventory',async()=>{const r=await post({...payload([{...item(),price:1}]),total:1});assert.equal(r.status,201);const order=await r.json();assert.equal(order.total,1365000);const catalog=await(await fetch(url+'/api/products')).json();assert.equal(catalog[0].variants.find(v=>v.size==='۳۸'&&v.color==='مشکی').stock,4);const orders=await(await fetch(url+'/api/admin/orders',{headers:{Authorization:'Bearer test-secret-key'}})).json();assert.equal(orders[0].phone,'09123456789');assert.equal(orders[0].items[0].price,1280000);});
+test('duplicate lines cannot oversell and transaction rolls back',async()=>{const r=await post(payload([item(1,3),item(1,3)]));assert.equal(r.status,400);const catalog=await(await fetch(url+'/api/products')).json();assert.equal(catalog[0].variants.find(v=>v.size==='۳۸'&&v.color==='مشکی').stock,4);});
+test('free shipping and admin access controls',async()=>{const r=await post(payload([item(1,2)]));const order=await r.json();assert.equal(order.shipping,0);assert.equal(order.total,2560000);assert.equal((await fetch(url+'/api/admin/orders')).status,401);assert.equal((await fetch(url+'/api/admin/orders',{headers:{Authorization:'Bearer wrong'}})).status,401);});
+test('invalid variants, empty cart and cross-origin submissions rejected',async()=>{assert.equal((await post(payload([{...item(),size:'invalid'}]))).status,400);assert.equal((await post(payload([]))).status,400);assert.equal((await fetch(url+'/api/orders',{method:'POST',headers:{Origin:'https://untrusted.example','Content-Type':'application/json'},body:JSON.stringify(payload([item()]))})).status,403);});
