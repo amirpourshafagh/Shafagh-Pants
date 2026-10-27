@@ -1,1 +1,14 @@
-{"name":"shafagh-boutique","version":"1.0.0","private":true,"type":"module","scripts":{"start":"node --experimental-sqlite server.js","test":"node --experimental-sqlite --test tests/*.test.js"},"engines":{"node":">=22.13"}}
+{
+  "name": "shafagh-boutique",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --experimental-sqlite server.js",
+    "test": "node --experimental-sqlite --test tests/*.test.js",
+    "admin:setup": "node --experimental-sqlite scripts/admin-setup.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

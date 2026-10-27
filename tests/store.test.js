@@ -1,18 +1,71 @@
+import { DatabaseSync } from 'node:sqlite';
+import { setAdmin } from '../lib/security.js';
 import {test,before,after} from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {resolve} from 'node:path';
-const temp=mkdtempSync(resolve('tests','test-db-'));const port=3187;let child;
+const temp=mkdtempSync(resolve('tests','test-db-'));const port=3187;let child; let cookie='',csrf='';
 const url=`http://127.0.0.1:${port}`;
-before(async()=>{child=spawn(process.execPath,['--experimental-sqlite','server.js'],{env:{...process.env,PORT:String(port),DB_PATH:resolve(temp,'test.db'),ADMIN_KEY:'test-secret-key'},stdio:'pipe'});await new Promise((ok,no)=>{const timer=setTimeout(()=>no(Error('Server startup timeout')),10000);child.stdout.on('data',()=>{clearTimeout(timer);ok();});child.on('error',no);});});
+before(async()=>{const db=new DatabaseSync(resolve(temp,'test.db'));await setAdmin(db,'admin','test-password-only-123');db.close();child=spawn(process.execPath,['--experimental-sqlite','server.js'],{env:{...process.env,PORT:String(port),DB_PATH:resolve(temp,'test.db'),NODE_ENV:'test'},stdio:'pipe'});await new Promise((ok,no)=>{const timer=setTimeout(()=>no(Error('Server startup timeout')),10000);child.stdout.on('data',()=>{clearTimeout(timer);ok();});child.on('error',no);});const response=await fetch(url+'/api/admin/login',{method:'POST',headers:{Origin:url,'Content-Type':'application/json'},body:JSON.stringify({username:'admin',password:'test-password-only-123'})});assert.equal(response.status,200);cookie=response.headers.get('set-cookie').split(';')[0];csrf=(await response.json()).csrf;});
 after(async()=>{if(child){child.kill();await new Promise(ok=>child.once('exit',ok));}rmSync(temp,{recursive:true,force:true});});
 const payload=items=>({name:'مشتری آزمایشی',phone:'۰۹۱۲۳۴۵۶۷۸۹',address:'تهران، خیابان نمونه، پلاک ۱۲',postal:'۱۲۳۴۵۶۷۸۹۰',items});
 const item=(id=1,quantity=1)=>({id,quantity,size:'۳۸',color:'مشکی'});
 const post=data=>fetch(url+'/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
 test('catalog and static pages are available',async()=>{const products=await(await fetch(url+'/api/products')).json();assert.equal(products.length,8);assert.equal(products[0].variants.length,15);assert.equal((await fetch(url)).status,200);assert.equal((await fetch(url+'/admin')).status,200);assert.equal((await fetch(url+'/server.js')).status,404);});
 test('invalid order does not change stock',async()=>{const r=await post({...payload([item()]),phone:'123'});assert.equal(r.status,400);});
-test('server calculates price, normalizes digits, stores order, decrements inventory',async()=>{const r=await post({...payload([{...item(),price:1}]),total:1});assert.equal(r.status,201);const order=await r.json();assert.equal(order.total,1365000);const catalog=await(await fetch(url+'/api/products')).json();assert.equal(catalog[0].variants.find(v=>v.size==='۳۸'&&v.color==='مشکی').stock,4);const orders=await(await fetch(url+'/api/admin/orders',{headers:{Authorization:'Bearer test-secret-key'}})).json();assert.equal(orders[0].phone,'09123456789');assert.equal(orders[0].items[0].price,1280000);});
+test('server calculates price, normalizes digits, stores order, decrements inventory',async()=>{const r=await post({...payload([{...item(),price:1}]),total:1});assert.equal(r.status,201);const order=await r.json();assert.equal(order.total,1365000);const catalog=await(await fetch(url+'/api/products')).json();assert.equal(catalog[0].variants.find(v=>v.size==='۳۸'&&v.color==='مشکی').stock,4);const orders=await(await fetch(url+'/api/admin/orders',{headers:{Cookie:cookie}})).json();assert.equal(orders[0].phone,'09123456789');assert.equal(orders[0].items[0].price,1280000);});
 test('duplicate lines cannot oversell and transaction rolls back',async()=>{const r=await post(payload([item(1,3),item(1,3)]));assert.equal(r.status,400);const catalog=await(await fetch(url+'/api/products')).json();assert.equal(catalog[0].variants.find(v=>v.size==='۳۸'&&v.color==='مشکی').stock,4);});
 test('free shipping and admin access controls',async()=>{const r=await post(payload([item(1,2)]));const order=await r.json();assert.equal(order.shipping,0);assert.equal(order.total,2560000);assert.equal((await fetch(url+'/api/admin/orders')).status,401);assert.equal((await fetch(url+'/api/admin/orders',{headers:{Authorization:'Bearer wrong'}})).status,401);});
 test('invalid variants, empty cart and cross-origin submissions rejected',async()=>{assert.equal((await post(payload([{...item(),size:'invalid'}]))).status,400);assert.equal((await post(payload([]))).status,400);assert.equal((await fetch(url+'/api/orders',{method:'POST',headers:{Origin:'https://untrusted.example','Content-Type':'application/json'},body:JSON.stringify(payload([item()]))})).status,403);});
+
+const adminRequest=(path,method='GET',data,headers={})=>fetch(url+'/api/admin/'+path,{method,headers:{Cookie:cookie,Origin:url,'Content-Type':'application/json','X-CSRF-Token':csrf,...headers},...(data===undefined?{}:{body:JSON.stringify(data)})});
+const productData={name:'Test product',category:'test-category',price:100000,old_price:null,image:'https://images.unsplash.com/photo-1475180098004-ca77a66827be',description:'Test',tag:'',active:true,variants:[{size:'M',color:'Black',stock:3}]};
+test('authentication, CSRF and origin protection',async()=>{
+ assert.equal((await fetch(url+'/api/admin/products')).status,401);
+ assert.equal((await adminRequest('categories','POST',{slug:'blocked',name:'Blocked'},{'X-CSRF-Token':'wrong'})).status,403);
+ assert.equal((await adminRequest('categories','POST',{slug:'blocked',name:'Blocked'},{Origin:'https://attacker.example'})).status,403);
+ const res=await fetch(url+'/admin');assert.match(res.headers.get('content-security-policy'),/script-src 'self'/);assert.equal(res.headers.get('cache-control'),'no-store');
+});
+test('category and product CRUD with validation, revisions, archive and restore',async()=>{
+ assert.equal((await adminRequest('categories','POST',{slug:'test-category',name:'Test category'})).status,200);
+ assert.equal((await adminRequest('categories/test-category','PUT',{name:'Updated category'})).status,200);
+ assert.equal((await adminRequest('products','POST',{...productData,image:'javascript:alert(1)'})).status,400);
+ assert.equal((await adminRequest('products','POST',{...productData,price:-1})).status,400);
+ assert.equal((await adminRequest('products','POST',{...productData,variants:[productData.variants[0],productData.variants[0]]})).status,400);
+ const response=await adminRequest('products','POST',productData);assert.equal(response.status,201);const {id}=await response.json();
+ let product=(await(await adminRequest('products')).json()).find(p=>p.id===id);assert.equal(product.variants[0].stock,3);
+ assert.equal((await adminRequest('categories/test-category','DELETE',{})).status,409);
+ assert.equal((await adminRequest('products/'+id,'PUT',{...productData,version:product.version,price:120000})).status,200);
+ assert.equal((await adminRequest('products/'+id,'PUT',{...productData,version:product.version})).status,409);
+ product=(await(await adminRequest('products')).json()).find(p=>p.id===id);
+ assert.equal((await adminRequest('products/'+id,'DELETE',{version:product.version})).status,200);
+ assert.ok(!(await(await fetch(url+'/api/products')).json()).some(p=>p.id===id));
+ assert.equal((await post(payload([{id,size:'M',color:'Black',quantity:1}]))).status,400);
+ product=(await(await adminRequest('products')).json()).find(p=>p.id===id);
+ assert.equal((await adminRequest('products/'+id,'PATCH',{version:product.version})).status,200);
+ product=(await(await adminRequest('products')).json()).find(p=>p.id===id);assert.equal(product.active,0);assert.equal(product.deleted_at,null);
+ assert.equal((await adminRequest('categories','POST',{slug:'empty-cat',name:'Empty category'})).status,200);
+ assert.equal((await adminRequest('categories/empty-cat','DELETE',{})).status,200);
+});
+test('order cancellation restores inventory once and preserves history after archive',async()=>{
+ let catalog=await(await fetch(url+'/api/products')).json();const before=catalog[1].variants.find(v=>v.size===item().size&&v.color===item().color).stock;
+ const order=await(await post(payload([item(2)]))).json();assert.ok(order.id);
+ assert.equal((await adminRequest('orders/'+order.id,'PATCH',{status:'delivered',previous_status:'pending',tracking:'123'})).status,409);
+ assert.equal((await adminRequest('orders/'+order.id,'PATCH',{status:'cancelled',previous_status:'pending',tracking:''})).status,200);
+ assert.equal((await adminRequest('orders/'+order.id,'PATCH',{status:'cancelled',previous_status:'pending',tracking:''})).status,409);
+ assert.equal((await adminRequest('orders/'+order.id,'PATCH',{status:'cancelled',previous_status:'cancelled',tracking:''})).status,200);
+ catalog=await(await fetch(url+'/api/products')).json();assert.equal(catalog[1].variants.find(v=>v.size===item().size&&v.color===item().color).stock,before);
+ const p=(await(await adminRequest('products')).json()).find(p=>p.id===2);
+ assert.equal((await adminRequest('products/2','DELETE',{version:p.version})).status,200);
+ assert.ok((await(await adminRequest('orders')).json()).find(o=>o.id===order.id).items.length);
+});
+test('credentials are hashed, session expiry, logout and brute-force limit',async()=>{
+ const db=new DatabaseSync(resolve(temp,'test.db'));const credential=db.prepare('SELECT * FROM admin_credentials').get();assert.notEqual(credential.hash,'test-password-only-123');assert.equal(credential.hash.length,128);
+ db.prepare('UPDATE admin_sessions SET last_seen=0').run();assert.equal((await adminRequest('session')).status,401);db.close();
+ const login=()=>fetch(url+'/api/admin/login',{method:'POST',headers:{Origin:url,'Content-Type':'application/json'},body:JSON.stringify({username:'admin',password:'test-password-only-123'})});
+ const response=await login();assert.equal(response.status,200);assert.match(response.headers.get('set-cookie'),/HttpOnly/);assert.match(response.headers.get('set-cookie'),/SameSite=Strict/);cookie=response.headers.get('set-cookie').split(';')[0];csrf=(await response.json()).csrf;
+ assert.equal((await adminRequest('logout','POST',{})).status,200);assert.equal((await adminRequest('products')).status,401);
+ for(let i=0;i<5;i++){const r=await fetch(url+'/api/admin/login',{method:'POST',headers:{Origin:url,'Content-Type':'application/json'},body:JSON.stringify({username:'admin',password:'wrong-password'})});assert.equal(r.status,401);}
+ assert.equal((await login()).status,429);
+});

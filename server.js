@@ -3,7 +3,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { resolve, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
+import { installAdmin } from './lib/admin.js';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const dbPath = process.env.DB_PATH || resolve(root, 'data/store.db');
@@ -26,7 +27,7 @@ if (!db.prepare('SELECT id FROM products LIMIT 1').get()) {
  ['پیراهن بلند آناهیتا','dresses',2690000,null,'پیراهن بلند با فرم روان و جزئیات ظریف برای مهمانی‌های شما.','جدید'],
  ['شومیز کرپ ترنم','tops',890000,1050000,'شومیز ساده و کاربردی با پارچه کرپ و دوخت تمیز.','پیشنهاد ویژه']
  ];
- const insert = db.prepare('INSERT INTO products VALUES(?,?,?,?,?,?,?,?)');
+ const insert = db.prepare('INSERT INTO products(id,name,category,price,old_price,image,description,tag) VALUES(?,?,?,?,?,?,?,?)');
  const variant = db.prepare('INSERT INTO variants VALUES(?,?,?,?)');
  records.forEach((p,i)=>{ insert.run(i+1,p[0],p[1],p[2],p[3],`https://images.unsplash.com/${photos[i]}?auto=format&fit=crop&w=900&q=85`,p[4],p[5]); for(const size of ['۳۶','۳۸','۴۰','۴۲','۴۴']) for(const color of ['مشکی','کرم','زرشکی']) variant.run(i+1,size,color,5); });
 }
@@ -34,20 +35,20 @@ const json = (res,code,data)=>{res.writeHead(code,{'Content-Type':'application/j
 const normalizeDigits = s => String(s||'').replace(/[۰-۹]/g,c=>'۰۱۲۳۴۵۶۷۸۹'.indexOf(c)).replace(/[٠-٩]/g,c=>'٠١٢٣٤٥٦٧٨٩'.indexOf(c));
 async function body(req){let text='';for await(const chunk of req){text+=chunk;if(Buffer.byteLength(text)>32768)throw Error('اطلاعات ارسالی بیش از حد مجاز است.');}try{return JSON.parse(text);}catch{throw Error('اطلاعات ارسالی معتبر نیست.');}}
 // کد اصلاح‌شده
-function admin(req) {
-  const given = req.headers.authorization?.replace(/^Bearer /,'') || '';
-  
-  // این دو خط به ما نشان می‌دهند سرور چه چیزی دریافت کرده است
-  console.log("--- عیب‌یابی رمز ---");
-  console.log("رمزی که مرورگر فرستاده:", given);
-
-  return given.trim() === 'Amiric@264746';
-}
+const adminHandler = installAdmin(db, { json, body });
+if (process.env.NODE_ENV === 'production' && (!process.env.APP_ORIGIN || new URL(process.env.APP_ORIGIN).protocol !== 'https:')) throw Error('Production requires APP_ORIGIN=https://your-domain');
 const server = http.createServer(async(req,res)=>{
  res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');res.setHeader('X-Frame-Options','DENY');
  try{
  const url = new URL(req.url,'http://localhost');
- if(url.pathname==='/api/products' && req.method==='GET'){const products=db.prepare('SELECT * FROM products').all().map(p=>({...p,variants:db.prepare('SELECT size,color,stock FROM variants WHERE product_id=?').all(p.id)}));return json(res,200,products);}
+ const allowedHosts=process.env.APP_ORIGIN?[new URL(process.env.APP_ORIGIN).host]:[`localhost:${process.env.PORT||3000}`,`127.0.0.1:${process.env.PORT||3000}`];
+ if(!allowedHosts.includes(req.headers.host)) return json(res,403,{error:'Host is not allowed.'});
+ res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' https:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+ res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=()');
+ if(process.env.NODE_ENV==='production')res.setHeader('Strict-Transport-Security','max-age=31536000');
+ if(url.pathname.startsWith('/admin'))res.setHeader('Cache-Control','no-store');
+ if(await adminHandler(req,res,url))return;
+ if(url.pathname==='/api/products' && req.method==='GET'){const products=db.prepare('SELECT * FROM products WHERE active=1 AND deleted_at IS NULL').all().map(p=>({...p,variants:db.prepare('SELECT size,color,stock FROM variants WHERE product_id=?').all(p.id)}));return json(res,200,products);}
  if(url.pathname==='/api/orders' && req.method==='POST'){
  const origin=req.headers.origin;if(origin && new URL(origin).host!==req.headers.host)return json(res,403,{error:'درخواست مجاز نیست.'});
  const data=await body(req);const name=String(data.name||'').trim(),phone=normalizeDigits(data.phone),address=String(data.address||'').trim(),postal=normalizeDigits(data.postal);
@@ -58,9 +59,10 @@ const server = http.createServer(async(req,res)=>{
  try{
  let subtotal=0;const items=[];
  for(const item of data.items){if(!Number.isInteger(item.quantity)||item.quantity<1||item.quantity>10)throw Error('تعداد محصول معتبر نیست.');
- const p=db.prepare('SELECT * FROM products WHERE id=?').get(Number(item.id));if(!p)throw Error('محصول پیدا نشد.');
+ const p=db.prepare('SELECT * FROM products WHERE id=? AND active=1 AND deleted_at IS NULL').get(Number(item.id));if(!p)throw Error('محصول پیدا نشد.');
  const result=db.prepare('UPDATE variants SET stock=stock-? WHERE product_id=? AND size=? AND color=? AND stock>=?').run(item.quantity,p.id,String(item.size),String(item.color),item.quantity);
  if(!result.changes)throw Error(`موجودی ${p.name} برای انتخاب شما کافی نیست.`);
+ db.prepare('UPDATE products SET version=version+1 WHERE id=?').run(p.id);
  subtotal+=p.price*item.quantity;items.push({...item,name:p.name,price:p.price});}
  const shipping=subtotal>=2500000?0:85000;const total=subtotal+shipping;
  db.prepare('INSERT INTO orders(id,name,phone,address,postal,total) VALUES(?,?,?,?,?,?)').run(id,name,phone,address,postal,total);
@@ -68,11 +70,10 @@ const server = http.createServer(async(req,res)=>{
  db.exec('COMMIT');return json(res,201,{id,total,shipping,status:'pending'});
  }catch(e){db.exec('ROLLBACK');return json(res,400,{error:e.message});}
  }
- if(url.pathname==='/api/admin/orders' && req.method==='GET'){if(!admin(req))return json(res,401,{error:'کلید مدیریت معتبر نیست یا مدیریت فعال نشده است.'});return json(res,200,db.prepare('SELECT * FROM orders ORDER BY created_at DESC').all().map(o=>({...o,items:db.prepare('SELECT * FROM order_items WHERE order_id=?').all(o.id)})));}
  if(url.pathname.startsWith('/api/'))return json(res,404,{error:'مسیر پیدا نشد.'});
  if(!['GET','HEAD'].includes(req.method))return json(res,405,{error:'متد مجاز نیست.'});
- const paths={'/':'index.html','/admin':'admin.html','/styles.css':'styles.css','/app.js':'app.js','/admin.js':'admin.js'};const file=paths[url.pathname];if(!file)return json(res,404,{error:'صفحه پیدا نشد.'});
+ const paths={'/':'index.html','/admin':'admin.html','/styles.css':'styles.css','/app.js':'app.js','/admin.js':'admin.js','/admin.css':'admin.css'};const file=paths[url.pathname];if(!file)return json(res,404,{error:'صفحه پیدا نشد.'});
  const content=readFileSync(resolve(root,'public',file));res.writeHead(200,{'Content-Type':({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'})[extname(file)]});res.end(req.method==='HEAD'?undefined:content);
- }catch(e){console.error(e);json(res,400,{error:'درخواست انجام نشد. دوباره تلاش کنید.'});}
+ }catch(e){console.error('Request failed:',e.code||'INVALID_REQUEST');json(res,400,{error:'درخواست انجام نشد. دوباره تلاش کنید.'});}
 });
 server.listen(Number(process.env.PORT||3000),'127.0.0.1',()=>console.log(`Shafagh: http://localhost:${process.env.PORT||3000}`));
