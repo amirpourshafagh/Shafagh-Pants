@@ -1,0 +1,5 @@
+---
+deployment:
+  tasks:
+    - mkdir -p tmp data
+    - /bin/touch tmp/restart.txt
