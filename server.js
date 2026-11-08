@@ -10,7 +10,7 @@ const root = dirname(fileURLToPath(import.meta.url));
 const dbPath = process.env.DB_PATH || resolve(root, 'data/store.db');
 mkdirSync(dirname(dbPath), { recursive: true });
 const db = new DatabaseSync(dbPath);
-db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
+db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
 CREATE TABLE IF NOT EXISTS products(id INTEGER PRIMARY KEY,name TEXT NOT NULL,category TEXT NOT NULL,price INTEGER NOT NULL,old_price INTEGER,image TEXT NOT NULL,description TEXT NOT NULL,tag TEXT);
 CREATE TABLE IF NOT EXISTS variants(product_id INTEGER REFERENCES products(id),size TEXT,color TEXT,stock INTEGER NOT NULL CHECK(stock>=0),PRIMARY KEY(product_id,size,color));
 CREATE TABLE IF NOT EXISTS orders(id TEXT PRIMARY KEY,name TEXT NOT NULL,phone TEXT NOT NULL,address TEXT NOT NULL,postal TEXT NOT NULL,total INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created_at TEXT DEFAULT CURRENT_TIMESTAMP);
@@ -34,19 +34,44 @@ if (!db.prepare('SELECT id FROM products LIMIT 1').get()) {
 const json = (res,code,data)=>{res.writeHead(code,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
 const normalizeDigits = s => String(s||'').replace(/[۰-۹]/g,c=>'۰۱۲۳۴۵۶۷۸۹'.indexOf(c)).replace(/[٠-٩]/g,c=>'٠١٢٣٤٥٦٧٨٩'.indexOf(c));
 async function body(req){let text='';for await(const chunk of req){text+=chunk;if(Buffer.byteLength(text)>32768)throw Error('اطلاعات ارسالی بیش از حد مجاز است.');}try{return JSON.parse(text);}catch{throw Error('اطلاعات ارسالی معتبر نیست.');}}
-// کد اصلاح‌شده
+function normalizeHost(value){return String(value||'').split(',')[0].trim().toLowerCase().replace(/:(80|443)$/,'');}
+function allowedHosts(){
+ if(!process.env.APP_ORIGIN) return null;
+ const url=new URL(process.env.APP_ORIGIN);
+ const host=url.host.toLowerCase();
+ const hostname=url.hostname.toLowerCase();
+ const alt=hostname.startsWith('www.')?hostname.slice(4):`www.${hostname}`;
+ return new Set([host, url.port ? `${alt}:${url.port}` : alt]);
+}
+function isAllowedHost(header){
+ const host=normalizeHost(header);
+ if(!host) return false;
+ const configured=allowedHosts();
+ if(configured) return configured.has(host);
+ const port=process.env.PORT||3000;
+ if([`localhost:${port}`,`127.0.0.1:${port}`,'localhost','127.0.0.1'].includes(host)) return true;
+ return process.env.NODE_ENV==='production';
+}
 const adminHandler = installAdmin(db, { json, body });
-if (process.env.NODE_ENV === 'production' && (!process.env.APP_ORIGIN || new URL(process.env.APP_ORIGIN).protocol !== 'https:')) throw Error('Production requires APP_ORIGIN=https://your-domain');
+if(process.env.NODE_ENV==='production' && process.env.APP_ORIGIN && new URL(process.env.APP_ORIGIN).protocol!=='https:'){
+ throw Error('APP_ORIGIN must be an https:// URL in production');
+}
+if(process.env.NODE_ENV==='production' && !process.env.APP_ORIGIN){
+ console.warn('Set APP_ORIGIN=https://your-domain for Host checks and Secure admin cookies.');
+}
+const port=Number(process.env.PORT||3000);
+const listenHost=process.env.LISTEN_HOST || (process.env.PORT || process.env.NODE_ENV==='production' ? '0.0.0.0' : '127.0.0.1');
 const server = http.createServer(async(req,res)=>{
  res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');res.setHeader('X-Frame-Options','DENY');
  try{
  const url = new URL(req.url,'http://localhost');
- const allowedHosts=process.env.APP_ORIGIN?[new URL(process.env.APP_ORIGIN).host]:[`localhost:${process.env.PORT||3000}`,`127.0.0.1:${process.env.PORT||3000}`];
- if(!allowedHosts.includes(req.headers.host)) return json(res,403,{error:'Host is not allowed.'});
+ url.pathname = url.pathname.replace(/\/+$/, '') || '/';
+ if(!isAllowedHost(req.headers.host)) return json(res,403,{error:'Host is not allowed.'});
  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' https:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
  res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=()');
  if(process.env.NODE_ENV==='production')res.setHeader('Strict-Transport-Security','max-age=31536000');
  if(url.pathname.startsWith('/admin'))res.setHeader('Cache-Control','no-store');
+ if(url.pathname==='/favicon.ico'){res.writeHead(204);res.end();return;}
  if(await adminHandler(req,res,url))return;
  if(url.pathname==='/api/products' && req.method==='GET'){const products=db.prepare('SELECT * FROM products WHERE active=1 AND deleted_at IS NULL').all().map(p=>({...p,variants:db.prepare('SELECT size,color,stock FROM variants WHERE product_id=?').all(p.id)}));return json(res,200,products);}
  if(url.pathname==='/api/orders' && req.method==='POST'){
@@ -72,8 +97,8 @@ const server = http.createServer(async(req,res)=>{
  }
  if(url.pathname.startsWith('/api/'))return json(res,404,{error:'مسیر پیدا نشد.'});
  if(!['GET','HEAD'].includes(req.method))return json(res,405,{error:'متد مجاز نیست.'});
- const paths={'/':'index.html','/admin':'admin.html','/styles.css':'styles.css','/app.js':'app.js','/admin.js':'admin.js','/admin.css':'admin.css'};const file=paths[url.pathname];if(!file)return json(res,404,{error:'صفحه پیدا نشد.'});
+ const paths={'/':'index.html','/index.html':'index.html','/admin':'admin.html','/admin.html':'admin.html','/styles.css':'styles.css','/app.js':'app.js','/admin.js':'admin.js','/admin.css':'admin.css'};const file=paths[url.pathname];if(!file)return json(res,404,{error:'صفحه پیدا نشد.'});
  const content=readFileSync(resolve(root,'public',file));res.writeHead(200,{'Content-Type':({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'})[extname(file)]});res.end(req.method==='HEAD'?undefined:content);
  }catch(e){console.error('Request failed:',e.code||'INVALID_REQUEST');json(res,400,{error:'درخواست انجام نشد. دوباره تلاش کنید.'});}
 });
-server.listen(Number(process.env.PORT||3000),'127.0.0.1',()=>console.log(`Shafagh: http://localhost:${process.env.PORT||3000}`));
+server.listen(port,listenHost,()=>console.log(`Shafagh: http://${listenHost}:${port}`));
