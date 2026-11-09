@@ -1,10 +1,6 @@
-DirectoryIndex public/index.html index.html
-RewriteEngine On
-RewriteBase /
-
-RewriteRule ^styles\.css$ public/styles.css [L]
-RewriteRule ^app\.js$ public/app.js [L]
-RewriteRule ^admin\.js$ public/admin.js [L]
-RewriteRule ^admin\.css$ public/admin.css [L]
-RewriteRule ^admin/?$ public/admin.html [L]
-RewriteRule ^$ public/index.html [L]
+# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION BEGIN
+PassengerAppRoot "/home/shafaghw/shafagh"
+PassengerBaseURI "/"
+PassengerAppType node
+PassengerStartupFile server.js
+# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION END

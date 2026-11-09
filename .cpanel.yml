@@ -8,5 +8,6 @@ deployment:
     - /bin/cp public/admin.html $DEPLOYPATH
     - /bin/cp public/admin.js $DEPLOYPATH
     - /bin/cp public/admin.css $DEPLOYPATH
+    - /bin/cp .htaccess $DEPLOYPATH
     - mkdir -p tmp data
     - /bin/touch tmp/restart.txt
