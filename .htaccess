@@ -2,7 +2,7 @@
 PassengerAppRoot "/home/shafaghw/shafagh"
 PassengerBaseURI "/"
 PassengerAppType node
-PassengerStartupFile server.js
+PassengerStartupFile app.js
 # DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION END
 
 DirectoryIndex index.html

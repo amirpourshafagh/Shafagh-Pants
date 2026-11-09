@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "main": "index.js",
+  "main": "app.js",
   "scripts": {
-    "start": "node index.js",
+    "start": "node app.js",
     "test": "node --experimental-sqlite --test tests/*.test.js",
     "admin:setup": "node --experimental-sqlite scripts/admin-setup.js"
   },
