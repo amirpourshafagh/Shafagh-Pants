@@ -1,7 +1,8 @@
 const $ = s => document.querySelector(s);
 const money = n => new Intl.NumberFormat('fa-IR').format(n);
 const esc = value => String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let categories = {pants:'شلوار زنانه',tops:'شومیز و بلوز',dresses:'لباس مجلسی',outerwear:'کت زنانه'};
+const hiddenCategories = new Set(['dresses','outerwear']);
+let categories = {pants:'شلوار زنانه',tops:'شومیز و بلوز'};
 let products=[],category='all',favoritesOnly=false,cart=[],favorites=[];
 try{cart=JSON.parse(localStorage.getItem('shafagh-cart')||'[]');favorites=JSON.parse(localStorage.getItem('shafagh-favorites')||'[]');if(!Array.isArray(cart))cart=[];if(!Array.isArray(favorites))favorites=[];}catch{cart=[];favorites=[];}
 let toastTimer;
@@ -33,9 +34,9 @@ document.addEventListener('click',e=>{const product=e.target.closest('[data-prod
 $('#cart-toggle').onclick=()=>{renderCart();$('#cart-dialog').showModal();};$('#wishlist-toggle').onclick=()=>{favoritesOnly=!favoritesOnly;category='all';render();$('#collection').scrollIntoView({behavior:'smooth'});};$('#search-toggle').onclick=()=>{$('#search-bar').hidden=false;$('#collection').scrollIntoView({behavior:'smooth'});$('#search').focus();};$('#search').oninput=render;$('#sort').onchange=render;$('#clear-search').onclick=reset;
 document.querySelectorAll('dialog').forEach(d=>d.addEventListener('click',e=>{if(e.target===d){const r=d.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)d.close();}}));
 async function loadProducts(){try{
- const catResponse=await fetch('/api/categories');if(!catResponse.ok)throw Error();const cats=await catResponse.json();categories=Object.fromEntries(cats.map(c=>[c.slug,c.name]));
+ const catResponse=await fetch('/api/categories');if(!catResponse.ok)throw Error();const cats=(await catResponse.json()).filter(c=>!hiddenCategories.has(c.slug));categories=Object.fromEntries(cats.map(c=>[c.slug,c.name]));
  const allButton=document.querySelector('[data-category="all"]').outerHTML;
  document.querySelector('.tabs').innerHTML=allButton+cats.map(c=>`<button data-category="${esc(c.slug)}">${esc(c.name)}</button>`).join('');
  document.querySelectorAll('[data-nav]').forEach(a=>{if(categories[a.dataset.nav])a.textContent=categories[a.dataset.nav];else a.remove();});
- const response=await fetch('/api/products');if(!response.ok)throw Error();products=await response.json();cart=cart.filter(i=>i&&Number.isInteger(i.quantity)&&i.quantity>0&&i.quantity<=10&&products.some(p=>p.id===i.id&&p.variants.some(v=>v.size===i.size&&v.color===i.color)));persist();render();}catch{$('#products').innerHTML='<div class="empty">دریافت محصولات انجام نشد. اتصال به سرور را بررسی کنید.<button class="primary" id="retry">تلاش دوباره</button></div>';$('#retry').onclick=loadProducts;}}
+ const response=await fetch('/api/products');if(!response.ok)throw Error();products=(await response.json()).filter(p=>!hiddenCategories.has(p.category));cart=cart.filter(i=>i&&Number.isInteger(i.quantity)&&i.quantity>0&&i.quantity<=10&&products.some(p=>p.id===i.id&&p.variants.some(v=>v.size===i.size&&v.color===i.color)));persist();render();}catch{$('#products').innerHTML='<div class="empty">دریافت محصولات انجام نشد. اتصال به سرور را بررسی کنید.<button class="primary" id="retry">تلاش دوباره</button></div>';$('#retry').onclick=loadProducts;}}
 loadProducts();

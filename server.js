@@ -70,7 +70,7 @@ const server = http.createServer(async(req,res)=>{
  if(url.pathname.startsWith('/admin'))res.setHeader('Cache-Control','no-store');
  if(url.pathname==='/favicon.ico'){res.writeHead(204);res.end();return;}
  if(await adminHandler(req,res,url))return;
- if(url.pathname==='/api/products' && req.method==='GET'){const products=db.prepare('SELECT * FROM products WHERE active=1 AND deleted_at IS NULL').all().map(p=>({...p,variants:db.prepare('SELECT size,color,stock FROM variants WHERE product_id=?').all(p.id)}));return json(res,200,products);}
+ if(url.pathname==='/api/products' && req.method==='GET'){const hidden=new Set(['dresses','outerwear']);const products=db.prepare('SELECT * FROM products WHERE active=1 AND deleted_at IS NULL').all().filter(p=>!hidden.has(p.category)).map(p=>({...p,variants:db.prepare('SELECT size,color,stock FROM variants WHERE product_id=?').all(p.id)}));return json(res,200,products);}
  if(url.pathname==='/api/orders' && req.method==='POST'){
  const origin=req.headers.origin;if(origin && new URL(origin).host!==req.headers.host)return json(res,403,{error:'درخواست مجاز نیست.'});
  const data=await body(req);const name=String(data.name||'').trim(),phone=normalizeDigits(data.phone),address=String(data.address||'').trim(),postal=normalizeDigits(data.postal);
