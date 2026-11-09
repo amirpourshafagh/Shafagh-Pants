@@ -53,11 +53,8 @@ function isAllowedHost(header){
  return process.env.NODE_ENV==='production';
 }
 const adminHandler = installAdmin(db, { json, body });
-if(process.env.NODE_ENV==='production' && process.env.APP_ORIGIN && new URL(process.env.APP_ORIGIN).protocol!=='https:'){
- throw Error('APP_ORIGIN must be an https:// URL in production');
-}
 if(process.env.NODE_ENV==='production' && !process.env.APP_ORIGIN){
- console.warn('Set APP_ORIGIN=https://your-domain for Host checks and Secure admin cookies.');
+ console.warn('Set APP_ORIGIN to your public site URL, for example http://shafaghwear.ir');
 }
 const port=Number(process.env.PORT||3000);
 const listenHost=process.env.LISTEN_HOST || (process.env.PORT || process.env.NODE_ENV==='production' ? '0.0.0.0' : '127.0.0.1');
@@ -69,7 +66,7 @@ const server = http.createServer(async(req,res)=>{
  if(!isAllowedHost(req.headers.host)) return json(res,403,{error:'Host is not allowed.'});
  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' https:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
  res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=()');
- if(process.env.NODE_ENV==='production')res.setHeader('Strict-Transport-Security','max-age=31536000');
+ if(process.env.APP_ORIGIN?.startsWith('https:'))res.setHeader('Strict-Transport-Security','max-age=31536000');
  if(url.pathname.startsWith('/admin'))res.setHeader('Cache-Control','no-store');
  if(url.pathname==='/favicon.ico'){res.writeHead(204);res.end();return;}
  if(await adminHandler(req,res,url))return;

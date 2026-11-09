@@ -4,3 +4,8 @@ PassengerBaseURI "/"
 PassengerAppType node
 PassengerStartupFile server.js
 # DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION END
+
+DirectoryIndex index.html
+RewriteEngine On
+RewriteBase /
+RewriteRule ^admin/?$ admin.html [L]
