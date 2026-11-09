@@ -94,8 +94,8 @@ const server = http.createServer(async(req,res)=>{
  }
  if(url.pathname.startsWith('/api/'))return json(res,404,{error:'مسیر پیدا نشد.'});
  if(!['GET','HEAD'].includes(req.method))return json(res,405,{error:'متد مجاز نیست.'});
- const paths={'/':'index.html','/index.html':'index.html','/admin':'admin.html','/admin.html':'admin.html','/styles.css':'styles.css','/app.js':'app.js','/admin.js':'admin.js','/admin.css':'admin.css'};const file=paths[url.pathname];if(!file)return json(res,404,{error:'صفحه پیدا نشد.'});
- const content=readFileSync(resolve(root,'public',file));res.writeHead(200,{'Content-Type':({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'})[extname(file)]});res.end(req.method==='HEAD'?undefined:content);
+ const paths={'/':'index.html','/index.html':'index.html','/admin':'admin.html','/admin.html':'admin.html','/styles.css':'styles.css','/app.js':'app.js','/admin.js':'admin.js','/admin.css':'admin.css','/7477218.txt':'7477218.txt'};const file=paths[url.pathname];if(!file)return json(res,404,{error:'صفحه پیدا نشد.'});
+ const content=readFileSync(resolve(root,'public',file));res.writeHead(200,{'Content-Type':({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.txt':'text/plain; charset=utf-8'})[extname(file)]});res.end(req.method==='HEAD'?undefined:content);
  }catch(e){console.error('Request failed:',e.code||'INVALID_REQUEST');json(res,400,{error:'درخواست انجام نشد. دوباره تلاش کنید.'});}
 });
 server.listen(port,listenHost,()=>console.log(`Shafagh: http://${listenHost}:${port}`));
