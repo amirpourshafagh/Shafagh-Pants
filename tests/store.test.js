@@ -26,6 +26,8 @@ test('authentication, CSRF and origin protection',async()=>{
  assert.equal((await adminRequest('categories','POST',{slug:'blocked',name:'Blocked'},{'X-CSRF-Token':'wrong'})).status,403);
  assert.equal((await adminRequest('categories','POST',{slug:'blocked',name:'Blocked'},{Origin:'https://attacker.example'})).status,403);
  const res=await fetch(url+'/admin');assert.match(res.headers.get('content-security-policy'),/script-src 'self'/);assert.equal(res.headers.get('cache-control'),'no-store');
+ assert.equal((await(await fetch(url+'/api/admin/setup')).json()).needed,false);
+ assert.equal((await fetch(url+'/api/admin/setup',{method:'POST',headers:{Origin:url,'Content-Type':'application/json'},body:JSON.stringify({username:'other',password:'password1',confirm:'password1'})})).status,409);
 });
 test('category and product CRUD with validation, revisions, archive and restore',async()=>{
  assert.equal((await adminRequest('categories','POST',{slug:'test-category',name:'Test category'})).status,200);
