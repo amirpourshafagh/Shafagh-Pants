@@ -10,6 +10,5 @@ deployment:
     - /bin/cp public/admin.css $DEPLOYPATH
     - /bin/cp public/7477218.txt $DEPLOYPATH
     - /bin/cp public/hero.jpg $DEPLOYPATH
-    - /bin/cp .htaccess $DEPLOYPATH
     - mkdir -p tmp data
     - /bin/touch tmp/restart.txt
